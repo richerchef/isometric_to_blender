@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Iso-Digitizer: Precision Build</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { display: flex; font-family: 'Segoe UI', sans-serif; margin: 0; height: 100vh; background: #1a1a1a; color: #eee; overflow: hidden; }
+        #sidebar { width: 500px; background: #252526; padding: 15px; border-right: 1px solid #333; overflow-y: auto; display: flex; flex-direction: column; }
+        #map { flex-grow: 1; background: #000; cursor: crosshair; }
+        
+        .panel { background: #333; padding: 10px; border-radius: 4px; margin-bottom: 10px; border: 1px solid #444; }
+        #preview-container { height: 300px; background: #000; position: relative; border: 1px solid #444; border-radius: 4px; overflow: hidden;}
+        
+        #hover-info { 
+            position: absolute; top: 10px; left: 10px; background: #0f0; 
+            color: #000; padding: 2px 8px; border-radius: 2px;
+            font-size: 11px; font-weight: bold; pointer-events: none; display: none;
+            z-index: 20; box-shadow: 0 0 10px rgba(0,255,0,0.3);
+        }
+
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th { background: #444; padding: 6px; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #222; }
+        td { border: 1px solid #444; padding: 2px; text-align: center; }
+        
+        .val-x { color: #44ff44 !important; } .val-y { color: #6666ff !important; } .val-z { color: #ff4444 !important; }
+        input { background: #121212; color: #eee; border: 1px solid #333; width: 100%; font-size: 11px; padding: 4px; box-sizing: border-box;}
+        input:focus { border-color: #0f0; outline: none; }
+
+        .active-row { background: #094771 !important; }
+        .btn { padding: 10px; cursor: pointer; border: none; border-radius: 2px; font-weight: bold; color: white; background: #2ea043; width: 100%; margin-top: 10px; }
+        
+        /* Preview UI */
+        .preview-line { stroke: #0f0; transition: stroke 0.2s; }
+        .preview-node { fill: #fff; stroke: #0f0; stroke-width: 1.5; }
+        .hit-area { fill: transparent; cursor: pointer; pointer-events: all; }
+        .hit-area:hover + .preview-node { fill: #0f0; r: 5; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <div class="panel">
+        <h3 style="margin:0 0 5px 0;">Drawing: <span id="projName" style="color:#0ff">None</span></h3>
+        <input type="file" id="imageInput" accept="image/*" onchange="loadImage(event)" style="font-size:11px; width: 100%;">
+    </div>
+
+    <div class="panel">
+        <div id="preview-container">
+            <div id="hover-info">NODE: <span id="hover-id">-</span></div>
+            <svg id="pipePreview" width="100%" height="100%"></svg>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+            <span style="font-size: 10px; color: #888;">3D WIREFRAME (AUTO-SCALE)</span>
+            <svg width="50" height="50" viewBox="0 0 100 100">
+                <line x1="50" y1="50" x2="50" y2="15" stroke="#ff4444" stroke-width="5" />
+                <line x1="50" y1="50" x2="15" y2="75" stroke="#44ff44" stroke-width="5" />
+                <line x1="50" y1="50" x2="85" y2="75" stroke="#4444ff" stroke-width="5" />
+            </svg>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Node ID</th>
+                <th class="val-x">dX</th><th class="val-y">dY</th><th class="val-z">dZ</th>
+                <th>Prev</th>
+                <th>Del</th>
+            </tr>
+        </thead>
+        <tbody id="nodeTableBody"></tbody>
+    </table>
+    
+    <button class="btn" onclick="downloadCSV()">EXPORT NODES (CSV)</button>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    let map = L.map('map', { crs: L.CRS.Simple, minZoom: -3 });
+    let nodes = [];
+    let markers = [];
+    let lines = [];
+    let activeIdx = -1;
+    let filePrefix = "ISO";
+
+    function loadImage(e) {
+        const file = e.target.files[0];
+        if(!file) return;
+        filePrefix = file.name.split('.')[0];
+        document.getElementById('projName').innerText = filePrefix;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+                const bounds = [[0, 0], [img.height, img.width]];
+                L.imageOverlay(ev.target.result, bounds).addTo(map);
+                map.fitBounds(bounds);
+            };
+            img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    map.on('click', function(e) {
+        let prevNode = activeIdx >= 0 ? nodes[activeIdx] : null;
+        let dx=0, dy=0, dz=0;
+
+        if (prevNode) {
+            let length = parseFloat(prompt("Segment Length (mm):", "1000")) || 0;
+            if (length === 0) return;
+            const dy_p = -(e.latlng.lat - prevNode.latlng.lat);
+            const dx_p = e.latlng.lng - prevNode.latlng.lng;
+            const ang = (Math.atan2(dy_p, dx_p) * 180 / Math.PI + 360) % 360;
+
+            if (ang > 65 && ang <= 115) dz = length;
+            else if (ang > 245 && ang <= 295) dz = -length;
+            else if (ang >= 0 && ang <= 65) dy = length;
+            else if (ang > 180 && ang <= 245) dy = -length;
+            else if (ang > 115 && ang <= 180) dx = -length;
+            else dx = length;
+        }
+
+        nodes.push({
+            id: `${filePrefix}-N${(nodes.length+1).toString().padStart(3,'0')}`,
+            prev: prevNode ? prevNode.id : "",
+            dx: dx, dy: dy, dz: dz,
+            latlng: e.latlng
+        });
+        activeIdx = nodes.length - 1;
+        updateUI();
+    });
+
+    function showTooltip(id, show) {
+        const info = document.getElementById('hover-info');
+        const span = document.getElementById('hover-id');
+        if (show) {
+            span.innerText = id;
+            info.style.display = 'block';
+        } else {
+            info.style.display = 'none';
+        }
+    }
+
+    function updateUI() {
+        markers.forEach(m => map.removeLayer(m));
+        lines.forEach(l => { if(l) map.removeLayer(l); });
+        markers = []; lines = [];
+        const tbody = document.getElementById('nodeTableBody');
+        tbody.innerHTML = "";
+        const previewSvg = document.getElementById('pipePreview');
+        previewSvg.innerHTML = "";
+
+        let min2D = {x:Infinity, y:Infinity}, max2D = {x:-Infinity, y:-Infinity};
+        let projectedPoints = [];
+
+        nodes.forEach((n, idx) => {
+            let parent = nodes.find(p => p.id === n.prev);
+            if (!parent) { n.absX = n.dx; n.absY = n.dy; n.absZ = n.dz; }
+            else { n.absX = parent.absX + n.dx; n.absY = parent.absY + n.dy; n.absZ = parent.absZ + n.dz; }
+
+            const m = L.circleMarker(n.latlng, { radius: 6, color: idx === activeIdx ? '#0f0' : '#fff', weight: 2 }).addTo(map);
+            m.on('click', (e) => { L.DomEvent.stopPropagation(e); activeIdx=idx; updateUI(); });
+            markers.push(m);
+
+            const isoX = (n.absY - n.absX) * 0.866;
+            const isoY = (-(n.absZ) + (n.absX + n.absY) * 0.5);
+            projectedPoints.push({x: isoX, y: isoY, id: n.id, idx: idx});
+            
+            min2D.x = Math.min(min2D.x, isoX); min2D.y = Math.min(min2D.y, isoY);
+            max2D.x = Math.max(max2D.x, isoX); max2D.y = Math.max(max2D.y, isoY);
+
+            if (parent) lines.push(L.polyline([parent.latlng, n.latlng], {color: '#ffff00', weight: 1, opacity: 0.5}).addTo(map));
+
+            const row = document.createElement('tr');
+            if (idx === activeIdx) row.className = 'active-row';
+            row.innerHTML = `
+                <td><input value="${n.id}" onchange="nodes[${idx}].id=this.value; updateUI();"></td>
+                <td><input class="val-x" type="number" value="${n.dx}" onchange="nodes[${idx}].dx=parseFloat(this.value); updateUI();"></td>
+                <td><input class="val-y" type="number" value="${n.dy}" onchange="nodes[${idx}].dy=parseFloat(this.value); updateUI();"></td>
+                <td><input class="val-z" type="number" value="${n.dz}" onchange="nodes[${idx}].dz=parseFloat(this.value); updateUI();"></td>
+                <td><input value="${n.prev}" onchange="nodes[${idx}].prev=this.value; updateUI();"></td>
+                <td><button onclick="nodes.splice(${idx},1); updateUI();" style="background:none; border:none; color:red; cursor:pointer; font-weight:bold;">✕</button></td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        if (nodes.length > 0) {
+            const pad = 40;
+            const w = (max2D.x - min2D.x) || 100;
+            const h = (max2D.y - min2D.y) || 100;
+            previewSvg.setAttribute("viewBox", `${min2D.x - pad} ${min2D.y - pad} ${w + pad*2} ${h + pad*2}`);
+            
+            projectedPoints.forEach(pt => {
+                let n = nodes[pt.idx];
+                let p = nodes.find(prev => prev.id === n.prev);
+                
+                if (p) {
+                    const parentPt = projectedPoints.find(ppt => ppt.id === p.id);
+                    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    l.setAttribute("x1", parentPt.x); l.setAttribute("y1", parentPt.y);
+                    l.setAttribute("x2", pt.x); l.setAttribute("y2", pt.y);
+                    l.setAttribute("stroke", "#0f0"); l.setAttribute("stroke-width", Math.max(1, w/150));
+                    l.classList.add("preview-line");
+                    previewSvg.appendChild(l);
+                }
+
+                // Hit Area (Large invisible circle for easier mousing)
+                const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                hit.setAttribute("cx", pt.x); hit.setAttribute("cy", pt.y);
+                hit.setAttribute("r", Math.max(8, w/40)); hit.classList.add("hit-area");
+                
+                // Visible Circle
+                const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                c.setAttribute("cx", pt.x); c.setAttribute("cy", pt.y);
+                c.setAttribute("r", Math.max(3, w/100)); c.classList.add("preview-node");
+                
+                hit.onmouseenter = () => showTooltip(n.id, true);
+                hit.onmouseleave = () => showTooltip(n.id, false);
+                hit.onclick = () => { 
+                    activeIdx = pt.idx; 
+                    updateUI();
+                    map.panTo(nodes[pt.idx].latlng);
+                };
+
+                previewSvg.appendChild(hit);
+                previewSvg.appendChild(c);
+            });
+        }
+    }
+
+    function downloadCSV() {
+        let csv = "NodeName,X,Y,Z,PreviousNode,Dimension,RunType\n";
+        csv += nodes.map(n => `${n.id},${n.absX},${n.absY},${n.absZ},${n.prev},100,run`).join("\n");
+        const blob = new Blob([csv], {type:'text/csv'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${filePrefix}_nodes.csv`;
+        a.click();
+    }
+</script>
+</body>
+</html>
