@@ -1,39 +1,32 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Iso-Digitizer: Precision Build</title>
+    <title>Vector Iso-Digitizer + Axis Guide</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { display: flex; font-family: 'Segoe UI', sans-serif; margin: 0; height: 100vh; background: #1a1a1a; color: #eee; overflow: hidden; }
-        #sidebar { width: 500px; background: #252526; padding: 15px; border-right: 1px solid #333; overflow-y: auto; display: flex; flex-direction: column; }
+        #sidebar { width: 550px; background: #252526; padding: 15px; border-right: 1px solid #333; overflow-y: auto; display: flex; flex-direction: column; }
         #map { flex-grow: 1; background: #000; cursor: crosshair; }
         
         .panel { background: #333; padding: 10px; border-radius: 4px; margin-bottom: 10px; border: 1px solid #444; }
-        #preview-container { height: 300px; background: #000; position: relative; border: 1px solid #444; border-radius: 4px; overflow: hidden;}
+        #preview-container { height: 250px; background: #000; position: relative; border: 1px solid #444; border-radius: 4px; overflow: hidden;}
         
-        #hover-info { 
-            position: absolute; top: 10px; left: 10px; background: #0f0; 
-            color: #000; padding: 2px 8px; border-radius: 2px;
-            font-size: 11px; font-weight: bold; pointer-events: none; display: none;
-            z-index: 20; box-shadow: 0 0 10px rgba(0,255,0,0.3);
-        }
+        #hover-info { position: absolute; top: 10px; left: 10px; background: #0f0; color: #000; padding: 2px 8px; font-size: 11px; font-weight: bold; pointer-events: none; display: none; z-index: 20; }
 
-        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        table { width: 100%; border-collapse: collapse; font-size: 10px; }
         th { background: #444; padding: 6px; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #222; }
-        td { border: 1px solid #444; padding: 2px; text-align: center; }
+        td { border: 1px solid #444; padding: 2px; }
         
         .val-x { color: #44ff44 !important; } .val-y { color: #6666ff !important; } .val-z { color: #ff4444 !important; }
-        input { background: #121212; color: #eee; border: 1px solid #333; width: 100%; font-size: 11px; padding: 4px; box-sizing: border-box;}
-        input:focus { border-color: #0f0; outline: none; }
-
+        input { background: #121212; color: #eee; border: 1px solid #333; width: 100%; font-size: 10px; padding: 4px; box-sizing: border-box;}
+        
         .active-row { background: #094771 !important; }
         .btn { padding: 10px; cursor: pointer; border: none; border-radius: 2px; font-weight: bold; color: white; background: #2ea043; width: 100%; margin-top: 10px; }
         
-        /* Preview UI */
-        .preview-line { stroke: #0f0; transition: stroke 0.2s; }
         .preview-node { fill: #fff; stroke: #0f0; stroke-width: 1.5; }
         .hit-area { fill: transparent; cursor: pointer; pointer-events: all; }
-        .hit-area:hover + .preview-node { fill: #0f0; r: 5; }
+        
+        .axis-label { font-size: 12px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -41,21 +34,41 @@
 <div id="sidebar">
     <div class="panel">
         <h3 style="margin:0 0 5px 0;">Drawing: <span id="projName" style="color:#0ff">None</span></h3>
-        <input type="file" id="imageInput" accept="image/*" onchange="loadImage(event)" style="font-size:11px; width: 100%;">
+        <input type="file" id="imageInput" accept="image/*" onchange="loadImage(event)" style="font-size:11px; width:100%;">
     </div>
 
     <div class="panel">
-        <div id="preview-container">
-            <div id="hover-info">NODE: <span id="hover-id">-</span></div>
-            <svg id="pipePreview" width="100%" height="100%"></svg>
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 5px;">
+            <label style="font-size: 10px; color: #aaa;">STARTING ANCHOR (X, Y, Z):</label>
+            <span style="font-size: 9px; color: #666;">AXIS GUIDE</span>
         </div>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-            <span style="font-size: 10px; color: #888;">3D WIREFRAME (AUTO-SCALE)</span>
-            <svg width="50" height="50" viewBox="0 0 100 100">
-                <line x1="50" y1="50" x2="50" y2="15" stroke="#ff4444" stroke-width="5" />
-                <line x1="50" y1="50" x2="15" y2="75" stroke="#44ff44" stroke-width="5" />
-                <line x1="50" y1="50" x2="85" y2="75" stroke="#4444ff" stroke-width="5" />
-            </svg>
+        <div style="display: flex; gap: 10px;">
+            <div style="flex: 1;">
+                <input type="text" id="globalStart" placeholder="e.g. 1500, 2000, 0" onchange="updateUI()" style="color: #0ff; margin-bottom: 10px;">
+                <div id="preview-container">
+                    <div id="hover-info">NODE: <span id="hover-id">-</span></div>
+                    <svg id="pipePreview" width="100%" height="100%"></svg>
+                </div>
+            </div>
+            
+            <div style="width: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #222; border-radius: 4px; border: 1px solid #444;">
+                <svg width="60" height="80" viewBox="0 0 100 120">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="0" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="context-stroke" />
+                        </marker>
+                    </defs>
+                    <line x1="50" y1="60" x2="50" y2="20" stroke="#ff4444" stroke-width="3" marker-end="url(#arrowhead)" />
+                    <text x="45" y="15" fill="#ff4444" class="axis-label">Z</text>
+                    
+                    <line x1="50" y1="60" x2="15" y2="85" stroke="#44ff44" stroke-width="3" marker-end="url(#arrowhead)" />
+                    <text x="5" y="95" fill="#44ff44" class="axis-label">X</text>
+                    
+                    <line x1="50" y1="60" x2="85" y2="85" stroke="#4444ff" stroke-width="3" marker-end="url(#arrowhead)" />
+                    <text x="85" y="95" fill="#4444ff" class="axis-label">Y</text>
+                </svg>
+                <div style="font-size: 8px; color: #888; margin-top: 5px;">ISO AXIS</div>
+            </div>
         </div>
     </div>
 
@@ -64,6 +77,7 @@
             <tr>
                 <th>Node ID</th>
                 <th class="val-x">dX</th><th class="val-y">dY</th><th class="val-z">dZ</th>
+                <th>Dim</th>
                 <th>Prev</th>
                 <th>Del</th>
             </tr>
@@ -71,7 +85,7 @@
         <tbody id="nodeTableBody"></tbody>
     </table>
     
-    <button class="btn" onclick="downloadCSV()">EXPORT NODES (CSV)</button>
+    <button class="btn" onclick="downloadCSV()">EXPORT VECTOR CSV</button>
 </div>
 
 <div id="map"></div>
@@ -124,8 +138,8 @@
 
         nodes.push({
             id: `${filePrefix}-N${(nodes.length+1).toString().padStart(3,'0')}`,
-            prev: prevNode ? prevNode.id : "",
-            dx: dx, dy: dy, dz: dz,
+            prev: prevNode ? prevNode.id : (document.getElementById('globalStart').value || ""),
+            dx: dx, dy: dy, dz: dz, dim: "100",
             latlng: e.latlng
         });
         activeIdx = nodes.length - 1;
@@ -135,12 +149,8 @@
     function showTooltip(id, show) {
         const info = document.getElementById('hover-info');
         const span = document.getElementById('hover-id');
-        if (show) {
-            span.innerText = id;
-            info.style.display = 'block';
-        } else {
-            info.style.display = 'none';
-        }
+        if (show) { span.innerText = id; info.style.display = 'block'; }
+        else { info.style.display = 'none'; }
     }
 
     function updateUI() {
@@ -160,18 +170,23 @@
             if (!parent) { n.absX = n.dx; n.absY = n.dy; n.absZ = n.dz; }
             else { n.absX = parent.absX + n.dx; n.absY = parent.absY + n.dy; n.absZ = parent.absZ + n.dz; }
 
-            const m = L.circleMarker(n.latlng, { radius: 6, color: idx === activeIdx ? '#0f0' : '#fff', weight: 2 }).addTo(map);
+            const m = L.circleMarker(n.latlng, { 
+            radius: 7, 
+            color: '#000',           // Black outline (always visible on white)
+            weight: 2,               // Thickness of the outline
+            fillColor: idx === activeIdx ? '#0f0' : '#ff00ff', // Green if active, Magenta if not
+            fillOpacity: 1           // Solid center so it covers the drawing lines
+            }).addTo(map);
             m.on('click', (e) => { L.DomEvent.stopPropagation(e); activeIdx=idx; updateUI(); });
             markers.push(m);
 
             const isoX = (n.absY - n.absX) * 0.866;
             const isoY = (-(n.absZ) + (n.absX + n.absY) * 0.5);
             projectedPoints.push({x: isoX, y: isoY, id: n.id, idx: idx});
-            
             min2D.x = Math.min(min2D.x, isoX); min2D.y = Math.min(min2D.y, isoY);
             max2D.x = Math.max(max2D.x, isoX); max2D.y = Math.max(max2D.y, isoY);
 
-            if (parent) lines.push(L.polyline([parent.latlng, n.latlng], {color: '#ffff00', weight: 1, opacity: 0.5}).addTo(map));
+            if (parent) lines.push(L.polyline([parent.latlng, n.latlng], {color: '#FF0000', weight: 2, opacity: 0.8}).addTo(map));
 
             const row = document.createElement('tr');
             if (idx === activeIdx) row.className = 'active-row';
@@ -180,8 +195,9 @@
                 <td><input class="val-x" type="number" value="${n.dx}" onchange="nodes[${idx}].dx=parseFloat(this.value); updateUI();"></td>
                 <td><input class="val-y" type="number" value="${n.dy}" onchange="nodes[${idx}].dy=parseFloat(this.value); updateUI();"></td>
                 <td><input class="val-z" type="number" value="${n.dz}" onchange="nodes[${idx}].dz=parseFloat(this.value); updateUI();"></td>
+                <td><input type="text" value="${n.dim}" onchange="nodes[${idx}].dim=this.value;"></td>
                 <td><input value="${n.prev}" onchange="nodes[${idx}].prev=this.value; updateUI();"></td>
-                <td><button onclick="nodes.splice(${idx},1); updateUI();" style="background:none; border:none; color:red; cursor:pointer; font-weight:bold;">✕</button></td>
+                <td><button onclick="nodes.splice(${idx},1); updateUI();" style="background:none; border:none; color:red; cursor:pointer;">✖</button></td>
             `;
             tbody.appendChild(row);
         });
@@ -195,35 +211,25 @@
             projectedPoints.forEach(pt => {
                 let n = nodes[pt.idx];
                 let p = nodes.find(prev => prev.id === n.prev);
-                
                 if (p) {
                     const parentPt = projectedPoints.find(ppt => ppt.id === p.id);
                     const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
                     l.setAttribute("x1", parentPt.x); l.setAttribute("y1", parentPt.y);
                     l.setAttribute("x2", pt.x); l.setAttribute("y2", pt.y);
                     l.setAttribute("stroke", "#0f0"); l.setAttribute("stroke-width", Math.max(1, w/150));
-                    l.classList.add("preview-line");
                     previewSvg.appendChild(l);
                 }
-
-                // Hit Area (Large invisible circle for easier mousing)
                 const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 hit.setAttribute("cx", pt.x); hit.setAttribute("cy", pt.y);
-                hit.setAttribute("r", Math.max(8, w/40)); hit.classList.add("hit-area");
+                hit.setAttribute("r", Math.max(10, w/30)); hit.classList.add("hit-area");
+                hit.onmouseenter = () => showTooltip(n.id, true);
+                hit.onmouseleave = () => showTooltip(n.id, false);
+                hit.onclick = () => { activeIdx = pt.idx; updateUI(); map.panTo(nodes[pt.idx].latlng); };
                 
-                // Visible Circle
                 const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 c.setAttribute("cx", pt.x); c.setAttribute("cy", pt.y);
                 c.setAttribute("r", Math.max(3, w/100)); c.classList.add("preview-node");
                 
-                hit.onmouseenter = () => showTooltip(n.id, true);
-                hit.onmouseleave = () => showTooltip(n.id, false);
-                hit.onclick = () => { 
-                    activeIdx = pt.idx; 
-                    updateUI();
-                    map.panTo(nodes[pt.idx].latlng);
-                };
-
                 previewSvg.appendChild(hit);
                 previewSvg.appendChild(c);
             });
@@ -231,12 +237,12 @@
     }
 
     function downloadCSV() {
-        let csv = "NodeName,X,Y,Z,PreviousNode,Dimension,RunType\n";
-        csv += nodes.map(n => `${n.id},${n.absX},${n.absY},${n.absZ},${n.prev},100,run`).join("\n");
+        let csv = "NodeName,dX,dY,dZ,Dimension,PreviousNode\n";
+        csv += nodes.map(n => `${n.id},${n.dx},${n.dy},${n.dz},${n.dim},${n.prev}`).join("\n");
         const blob = new Blob([csv], {type:'text/csv'});
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `${filePrefix}_nodes.csv`;
+        a.download = `${filePrefix}_vectors.csv`;
         a.click();
     }
 </script>
