@@ -14,78 +14,95 @@ df1 = pd.read_excel(file1)
 df2 = pd.read_excel(file2)
 
 # ===============================
-# 2. FLATTEN ALL CELLS
+# 2. CONVERT EACH CELL TO RECORD WITH LOCATION
 # ===============================
 
-vals1 = df1.values.flatten()
-vals2 = df2.values.flatten()
+def extract_cells(df, sheet_name):
+    records = []
+    for row_idx in range(df.shape[0]):
+        for col_idx in range(df.shape[1]):
+            value = df.iat[row_idx, col_idx]
+            
+            if pd.notna(value):
+                text = str(value).strip().lower()
+                if text != "":
+                    records.append({
+                        "sheet": sheet_name,
+                        "row": row_idx + 2,  # +2 accounts for Excel header row
+                        "column": df.columns[col_idx],
+                        "value": text
+                    })
+    return pd.DataFrame(records)
 
-s1 = pd.Series(vals1).dropna().astype(str).str.strip().str.lower()
-s2 = pd.Series(vals2).dropna().astype(str).str.strip().str.lower()
+cells1 = extract_cells(df1, "Sheet1")
+cells2 = extract_cells(df2, "Sheet2")
 
-# Remove empty strings
-s1 = s1[s1 != ""]
-s2 = s2[s2 != ""]
-
-# Remove duplicates (improves performance massively)
-s1 = s1.drop_duplicates().reset_index(drop=True)
-s2 = s2.drop_duplicates().reset_index(drop=True)
-
-print(f"Unique values in Sheet1: {len(s1)}")
-print(f"Unique values in Sheet2: {len(s2)}")
+print("Cells in Sheet1:", len(cells1))
+print("Cells in Sheet2:", len(cells2))
 
 # ===============================
-# 3. EXACT MATCHES
+# 3. EXACT MATCHES WITH LOCATION
 # ===============================
 
-exact_matches = set(s1).intersection(set(s2))
-exact_df = pd.DataFrame({"exact_match": list(exact_matches)})
+exact_matches = pd.merge(
+    cells1,
+    cells2,
+    on="value",
+    suffixes=("_sheet1", "_sheet2")
+)
 
-print(f"Exact matches found: {len(exact_df)}")
+print("Exact matches found:", len(exact_matches))
 
 # ===============================
 # 4. SIMILARITY MATCHING
 # ===============================
 
-combined = s1.tolist() + s2.tolist()
+# Remove duplicates by value to reduce comparison size
+unique1 = cells1.drop_duplicates(subset=["value"]).reset_index(drop=True)
+unique2 = cells2.drop_duplicates(subset=["value"]).reset_index(drop=True)
+
+combined = unique1["value"].tolist() + unique2["value"].tolist()
 
 vectorizer = TfidfVectorizer().fit(combined)
 tfidf = vectorizer.transform(combined)
 
-tfidf_s1 = tfidf[:len(s1)]
-tfidf_s2 = tfidf[len(s1):]
+tfidf_1 = tfidf[:len(unique1)]
+tfidf_2 = tfidf[len(unique1):]
 
-similarity_matrix = cosine_similarity(tfidf_s1, tfidf_s2)
+similarity_matrix = cosine_similarity(tfidf_1, tfidf_2)
 
-# Adjust similarity threshold here
-threshold = 0.8
+threshold = 0.8  # adjust here
 
-results = []
+similar_results = []
 
 for i in range(similarity_matrix.shape[0]):
     for j in range(similarity_matrix.shape[1]):
         score = similarity_matrix[i, j]
         if score >= threshold:
-            results.append({
-                "sheet1_value": s1[i],
-                "sheet2_value": s2[j],
+            similar_results.append({
+                "sheet1_row": unique1.iloc[i]["row"],
+                "sheet1_column": unique1.iloc[i]["column"],
+                "sheet1_value": unique1.iloc[i]["value"],
+                "sheet2_row": unique2.iloc[j]["row"],
+                "sheet2_column": unique2.iloc[j]["column"],
+                "sheet2_value": unique2.iloc[j]["value"],
                 "similarity_score": round(float(score), 3)
             })
 
-similar_df = pd.DataFrame(results).sort_values(
+similar_df = pd.DataFrame(similar_results).sort_values(
     "similarity_score", ascending=False
 )
 
-print(f"Similar matches found (>{threshold}): {len(similar_df)}")
+print("Similar matches found:", len(similar_df))
 
 # ===============================
 # 5. EXPORT RESULTS
 # ===============================
 
-output_file = "comparison_results.xlsx"
+output_file = "comparison_results_with_locations.xlsx"
 
 with pd.ExcelWriter(output_file) as writer:
-    exact_df.to_excel(writer, sheet_name="Exact Matches", index=False)
+    exact_matches.to_excel(writer, sheet_name="Exact Matches", index=False)
     similar_df.to_excel(writer, sheet_name="Similar Matches", index=False)
 
 print("Done. Results saved to:", output_file)
