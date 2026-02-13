@@ -1,0 +1,91 @@
+import pandas as pd
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# ===============================
+# 1. LOAD FILES
+# ===============================
+
+file1 = "file1.xlsx"
+file2 = "file2.xlsx"
+
+df1 = pd.read_excel(file1)
+df2 = pd.read_excel(file2)
+
+# ===============================
+# 2. FLATTEN ALL CELLS
+# ===============================
+
+vals1 = df1.values.flatten()
+vals2 = df2.values.flatten()
+
+s1 = pd.Series(vals1).dropna().astype(str).str.strip().str.lower()
+s2 = pd.Series(vals2).dropna().astype(str).str.strip().str.lower()
+
+# Remove empty strings
+s1 = s1[s1 != ""]
+s2 = s2[s2 != ""]
+
+# Remove duplicates (improves performance massively)
+s1 = s1.drop_duplicates().reset_index(drop=True)
+s2 = s2.drop_duplicates().reset_index(drop=True)
+
+print(f"Unique values in Sheet1: {len(s1)}")
+print(f"Unique values in Sheet2: {len(s2)}")
+
+# ===============================
+# 3. EXACT MATCHES
+# ===============================
+
+exact_matches = set(s1).intersection(set(s2))
+exact_df = pd.DataFrame({"exact_match": list(exact_matches)})
+
+print(f"Exact matches found: {len(exact_df)}")
+
+# ===============================
+# 4. SIMILARITY MATCHING
+# ===============================
+
+combined = s1.tolist() + s2.tolist()
+
+vectorizer = TfidfVectorizer().fit(combined)
+tfidf = vectorizer.transform(combined)
+
+tfidf_s1 = tfidf[:len(s1)]
+tfidf_s2 = tfidf[len(s1):]
+
+similarity_matrix = cosine_similarity(tfidf_s1, tfidf_s2)
+
+# Adjust similarity threshold here
+threshold = 0.8
+
+results = []
+
+for i in range(similarity_matrix.shape[0]):
+    for j in range(similarity_matrix.shape[1]):
+        score = similarity_matrix[i, j]
+        if score >= threshold:
+            results.append({
+                "sheet1_value": s1[i],
+                "sheet2_value": s2[j],
+                "similarity_score": round(float(score), 3)
+            })
+
+similar_df = pd.DataFrame(results).sort_values(
+    "similarity_score", ascending=False
+)
+
+print(f"Similar matches found (>{threshold}): {len(similar_df)}")
+
+# ===============================
+# 5. EXPORT RESULTS
+# ===============================
+
+output_file = "comparison_results.xlsx"
+
+with pd.ExcelWriter(output_file) as writer:
+    exact_df.to_excel(writer, sheet_name="Exact Matches", index=False)
+    similar_df.to_excel(writer, sheet_name="Similar Matches", index=False)
+
+print("Done. Results saved to:", output_file)
