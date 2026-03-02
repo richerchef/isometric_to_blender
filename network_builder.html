@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>P&ID Builder</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+body { margin:0; font-family:Arial; }
+#header {
+  background:#222;
+  color:#fff;
+  padding:10px;
+  font-size:14px;
+}
+#map { height:calc(100vh - 60px); background:#111; }
+
+.valve { width:22px; height:8px; background:white; border:2px solid black; }
+.node-dot { width:8px; height:8px; background:#00ffff; border-radius:50%; }
+button { margin-left:10px; }
+</style>
+</head>
+<body>
+
+<div id="header">
+<strong>P&ID Builder</strong> |
+Click map = create node/start pipe |
+Click existing node = join |
+ESC / Right-click = stop drawing |
+Double-click node = valve |
+Right-click node = delete |
+Drag node = move |
+Press E = export .JS/.JSON |
+<button onclick="loadJsonFile()">Load JSON</button>
+<input type="file" id="fileInput" style="display:none"/>
+</div>
+
+<div id="map"></div>
+
+<script>
+// =======================
+// MAP SETUP
+// =======================
+const width=2000, height=1200;
+const map = L.map('map', {crs:L.CRS.Simple,minZoom:-2,maxZoom:2});
+const bounds=[[0,0],[height,width]];
+L.imageOverlay('diagram.png',bounds).addTo(map);
+map.fitBounds(bounds);
+
+// =======================
+// DATA
+// =======================
+let networkData={nodes:{},pipes:[]};
+let nodeCounter=1;
+let nodeMarkers={}, pipeLayers=[];
+let drawingMode=false, activeNode=null, previewLine=null;
+
+// =======================
+// MAP CLICK
+// =======================
+map.on('click', e=>{
+  if(!drawingMode){
+    const id=createNode(e.latlng.lng,e.latlng.lat);
+    startDrawing(id);
+  } else {
+    const id=createNode(e.latlng.lng,e.latlng.lat);
+    connectNodes(activeNode,id);
+    activeNode=id;
+  }
+});
+
+// =======================
+// NODE FUNCTIONS
+// =======================
+function createNode(x,y){
+  const id="N"+nodeCounter++;
+  networkData.nodes[id]={x,y,type:'normal'};
+  drawNode(id);
+  return id;
+}
+
+function drawNode(id){
+  const n=networkData.nodes[id];
+  const html=n.type==='valve'?`<div class="valve"></div>`:`<div class="node-dot"></div>`;
+  const icon=L.divIcon({className:'',html,iconSize:[20,20]});
+  const marker=L.marker([n.y,n.x],{icon,draggable:true}).addTo(map);
+
+  marker.on('drag', e=>{
+    const pos=e.target.getLatLng();
+    networkData.nodes[id].x=pos.lng;
+    networkData.nodes[id].y=pos.lat;
+    drawPipes();
+  });
+
+  marker.on('click', e=>{
+    L.DomEvent.stopPropagation(e);
+    if(!drawingMode) startDrawing(id);
+    else { connectNodes(activeNode,id); activeNode=id; }
+  });
+
+  marker.on('dblclick', ()=>{ toggleValve(id); });
+  marker.on('contextmenu', ()=>{ deleteNode(id); });
+
+  nodeMarkers[id]=marker;
+}
+
+// =======================
+// DRAWING CONTROL
+// =======================
+function startDrawing(id){
+  drawingMode=true; activeNode=id;
+  const n=networkData.nodes[id];
+  previewLine=L.polyline([[n.y,n.x],[n.y,n.x]],{color:'#ff0000',weight:4}).addTo(map);
+  map.on('mousemove', updatePreviewLine);
+}
+
+function updatePreviewLine(e){
+  if(!drawingMode||!previewLine) return;
+  const start=networkData.nodes[activeNode];
+  previewLine.setLatLngs([[start.y,start.x],[e.latlng.lat,e.latlng.lng]]);
+}
+
+function connectNodes(id1,id2){
+  networkData.pipes.push([id1,id2]);
+  drawPipes();
+}
+
+function stopDrawing(){
+  drawingMode=false; activeNode=null;
+  if(previewLine){ map.removeLayer(previewLine); previewLine=null; }
+  map.off('mousemove', updatePreviewLine);
+}
+
+document.addEventListener('keydown', e=>{
+  if(e.key==="Escape") stopDrawing();
+  if(e.key==="e") exportFiles();
+});
+map.on('contextmenu', stopDrawing);
+
+// =======================
+// VALVE TOGGLE
+// =======================
+function toggleValve(id){
+  const n=networkData.nodes[id];
+  n.type=(n.type==='normal')?'valve':'normal';
+  redrawAll();
+}
+
+// =======================
+// DELETE NODE
+// =======================
+function deleteNode(id){
+  delete networkData.nodes[id];
+  networkData.pipes=networkData.pipes.filter(p=>p[0]!==id && p[1]!==id);
+  redrawAll();
+}
+
+// =======================
+// DRAW PIPES
+// =======================
+function drawPipes(){
+  pipeLayers.forEach(p=>map.removeLayer(p));
+  pipeLayers=[];
+  networkData.pipes.forEach(p=>{
+    const p1=networkData.nodes[p[0]];
+    const p2=networkData.nodes[p[1]];
+    const line=L.polyline([[p1.y,p1.x],[p2.y,p2.x]],{color:'#ff0000',weight:4}).addTo(map);
+    pipeLayers.push(line);
+  });
+}
+
+// =======================
+// REDRAW
+// =======================
+function redrawAll(){
+  Object.values(nodeMarkers).forEach(m=>map.removeLayer(m));
+  nodeMarkers={};
+  drawPipes();
+  Object.keys(networkData.nodes).forEach(drawNode);
+}
+
+// =======================
+// EXPORT JSON + JS
+// =======================
+function exportFiles() {
+  const jsonContent = JSON.stringify(networkData, null, 2);
+  const jsContent = "const networkData = " + jsonContent + ";";
+
+  // JSON
+  const blobJson = new Blob([jsonContent], { type: "application/json" });
+  const aJson = document.createElement("a");
+  aJson.href = URL.createObjectURL(blobJson);
+  aJson.download = "network.json";
+  aJson.click();
+
+  // JS
+  const blobJs = new Blob([jsContent], { type: "text/javascript" });
+  const aJs = document.createElement("a");
+  aJs.href = URL.createObjectURL(blobJs);
+  aJs.download = "network.js";
+  aJs.click();
+}
+
+// =======================
+// LOAD JSON
+// =======================
+function loadJsonFile(){
+  document.getElementById('fileInput').click();
+}
+
+document.getElementById('fileInput').addEventListener('change', function(event){
+  const file = event.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = function(e){
+    try{
+      const loadedData = JSON.parse(e.target.result);
+      loadedData.nodes = loadedData.nodes || {};
+      loadedData.pipes = loadedData.pipes || [];
+
+      networkData = loadedData;
+      nodeCounter = Object.keys(networkData.nodes).length + 1;
+
+      // Clear map
+      Object.values(nodeMarkers).forEach(m => map.removeLayer(m));
+      pipeLayers.forEach(p => map.removeLayer(p));
+      nodeMarkers = {};
+      pipeLayers = [];
+
+      redrawAll();
+      stopDrawing();
+
+    } catch(err){
+      alert("Invalid JSON file: " + err);
+    }
+  }
+
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>

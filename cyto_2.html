@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Advanced P&ID Isolation</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="network.js"></script>
+
+<style>
+  body { margin:0; }
+  #map { width:100%; height:100vh; background:#222; }
+
+  .valve {
+    width:22px;
+    height:8px;
+    background:white;
+    border:2px solid black;
+  }
+
+  .valve.closed {
+    background:black;
+    transform: rotate(90deg);
+  }
+
+  .node-dot {
+    width:6px;
+    height:6px;
+    background:#444;
+    border-radius:50%;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<script>
+
+// =========================
+// MAP SETUP
+// =========================
+
+const width = 2000;
+const height = 1200;
+
+const map = L.map('map', {
+  crs: L.CRS.Simple,
+  minZoom: -2,
+  maxZoom: 2
+});
+
+const bounds = [[0,0],[height,width]];
+L.imageOverlay('diagram.png', bounds).addTo(map);
+map.fitBounds(bounds);
+
+// =========================
+// NETWORK DATA
+// =========================
+
+const nodes = networkData.nodes;
+const pipes = networkData.pipes;
+let pipeLayers=[];
+
+// =========================
+// DRAW PIPES
+// =========================
+
+function drawPipes(){
+  pipeLayers.forEach(p=>map.removeLayer(p.line));
+  pipeLayers=[];
+
+  pipes.forEach(p=>{
+    const p1=nodes[p[0]];
+    const p2=nodes[p[1]];
+
+    const line=L.polyline(
+      [[p1.y,p1.x],[p2.y,p2.x]],
+      {color:'#bbb',weight:6}
+    ).addTo(map);
+
+    pipeLayers.push({line:line,from:p[0],to:p[1]});
+  });
+}
+
+drawPipes();
+
+// =========================
+// DRAW NODES
+// =========================
+
+Object.keys(nodes).forEach(id=>{
+  const n=nodes[id];
+
+  if(n.type==='valve'){
+    const icon=L.divIcon({
+      className:'',
+      html:`<div id="valve-${id}" class="valve"></div>`,
+      iconSize:[22,22]
+    });
+
+    const marker=L.marker([n.y,n.x],{icon}).addTo(map);
+
+    marker.on('click',()=>{
+      n.open=!n.open;
+      updateValves();
+      computeIsolation();
+    });
+
+  } else {
+    const icon=L.divIcon({
+      className:'',
+      html:`<div class="node-dot"></div>`,
+      iconSize:[6,6]
+    });
+    L.marker([n.y,n.x],{icon}).addTo(map);
+  }
+});
+
+function updateValves(){
+  Object.keys(nodes).forEach(id=>{
+    if(nodes[id].type==='valve'){
+      const el=document.getElementById(`valve-${id}`);
+      if(nodes[id].open){
+        el.classList.remove('closed');
+      } else {
+        el.classList.add('closed');
+      }
+    }
+  });
+}
+
+// =========================
+// PROPER ISOLATION ENGINE
+// =========================
+
+function computeIsolation(){
+
+  pipeLayers.forEach(p=>p.line.setStyle({color:'#bbb'}));
+
+  let visited=new Set();
+  let groupIndex=0;
+
+  // Build adjacency WITHOUT pipes connected to closed valves
+  let adjacency={};
+
+  Object.keys(nodes).forEach(id=>adjacency[id]=[]);
+
+  pipes.forEach(p=>{
+    const from=p[0];
+    const to=p[1];
+
+    // Skip pipe if either end is closed valve
+    if(nodes[from].type==='valve' && !nodes[from].open) return;
+    if(nodes[to].type==='valve' && !nodes[to].open) return;
+
+    adjacency[from].push(to);
+    adjacency[to].push(from);
+  });
+
+  Object.keys(nodes).forEach(start=>{
+    if(visited.has(start)) return;
+
+    let stack=[start];
+    let group=[];
+
+    while(stack.length){
+      let node=stack.pop();
+      if(visited.has(node)) continue;
+
+      visited.add(node);
+      group.push(node);
+
+      adjacency[node].forEach(neigh=>{
+        if(!visited.has(neigh)) stack.push(neigh);
+      });
+    }
+
+    if(group.length){
+      let color=getColor(groupIndex++);
+
+      pipeLayers.forEach(p=>{
+        if(group.includes(p.from) && group.includes(p.to)){
+          p.line.setStyle({color});
+        }
+      });
+    }
+  });
+}
+
+function getColor(i){
+  const colors=[
+    "#ff4d4d","#4da6ff","#4dff88",
+    "#ffcc00","#cc66ff","#ff884d",
+    "#66ffff","#ff66b2"
+  ];
+  return colors[i%colors.length];
+}
+
+computeIsolation();
+
+</script>
+</body>
+</html>
