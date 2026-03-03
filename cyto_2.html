@@ -9,37 +9,115 @@
 <script src="network.js"></script>
 
 <style>
-  body { margin:0; }
-  #map { width:100%; height:100vh; background:#222; }
+body { margin:0; overflow:hidden; font-family:Arial; }
+#map { position:absolute; left:260px; right:0; top:0; bottom:0; background:#222; }
 
-  .valve {
-    width:22px;
-    height:8px;
-    background:white;
-    border:2px solid black;
-  }
+/* ---------------- Sidebar ---------------- */
 
-  .valve.closed {
-    background:black;
-    transform: rotate(90deg);
-  }
+#sidebar {
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:260px;
+  background:#111;
+  color:white;
+  padding:15px;
+  overflow-y:auto;
+  border-right:1px solid #333;
+}
 
-  .node-dot {
-    width:6px;
-    height:6px;
-    background:#444;
-    border-radius:50%;
-  }
+#sidebar h2 {
+  margin-top:0;
+  font-size:16px;
+}
+
+.valve-row {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:8px;
+  padding:4px 0;
+  border-bottom:1px solid #222;
+}
+
+.toggle-btn {
+  cursor:pointer;
+  padding:3px 8px;
+  font-size:12px;
+  border-radius:4px;
+  border:none;
+}
+
+.open { background:#2ecc71; color:black; }
+.closed { background:#e74c3c; color:white; }
+
+select, input, button {
+  width:100%;
+  margin-bottom:8px;
+  padding:5px;
+  font-size:12px;
+  border-radius:4px;
+  border:none;
+}
+
+/* ---------------- Valves ---------------- */
+
+.valve {
+  width:22px;
+  height:8px;
+  background:white;
+  border:2px solid black;
+  transition: transform 0.35s ease, background 0.35s ease;
+  transform-origin:center;
+}
+
+.valve.closed {
+  background:black;
+  transform:rotate(90deg);
+}
+
+.node-dot {
+  width:6px;
+  height:6px;
+  background:#444;
+  border-radius:50%;
+}
+
+/* ---------------- Pipes ---------------- */
+
+.leaflet-overlay-pane path {
+  transition: stroke 0.4s ease;
+}
+
+.pipe-glow {
+  filter: drop-shadow(0 0 4px rgba(255,255,255,0.4));
+}
+
 </style>
 </head>
 <body>
+
+<div id="sidebar">
+  <h2>Valve States</h2>
+  <div id="valveList"></div>
+
+  <hr>
+
+  <h2>Saved Setups</h2>
+  <input type="text" id="configName" placeholder="Configuration name"/>
+  <button onclick="saveConfig()">Save Current Setup</button>
+
+  <select id="configSelect"></select>
+  <button onclick="loadConfig()">Load Selected</button>
+  <button onclick="deleteConfig()">Delete Selected</button>
+</div>
+
 <div id="map"></div>
 
 <script>
 
-// =========================
-// MAP SETUP
-// =========================
+// ================= MAP =================
 
 const width = 2000;
 const height = 1200;
@@ -54,48 +132,37 @@ const bounds = [[0,0],[height,width]];
 L.imageOverlay('diagram.png', bounds).addTo(map);
 map.fitBounds(bounds);
 
-// =========================
-// NETWORK DATA
-// =========================
+// ================= DATA =================
 
 const nodes = networkData.nodes;
 const pipes = networkData.pipes;
 let pipeLayers=[];
 
-// =========================
-// DRAW PIPES
-// =========================
+// ================= DRAW PIPES =================
 
-function drawPipes(){
-  pipeLayers.forEach(p=>map.removeLayer(p.line));
-  pipeLayers=[];
+pipes.forEach(p=>{
+  const p1=nodes[p[0]];
+  const p2=nodes[p[1]];
 
-  pipes.forEach(p=>{
-    const p1=nodes[p[0]];
-    const p2=nodes[p[1]];
+  const line=L.polyline(
+    [[p1.y,p1.x],[p2.y,p2.x]],
+    {color:'#bbb',weight:6}
+  ).addTo(map);
 
-    const line=L.polyline(
-      [[p1.y,p1.x],[p2.y,p2.x]],
-      {color:'#bbb',weight:6}
-    ).addTo(map);
+  pipeLayers.push({line:line,from:p[0],to:p[1]});
+});
 
-    pipeLayers.push({line:line,from:p[0],to:p[1]});
-  });
-}
-
-drawPipes();
-
-// =========================
-// DRAW NODES
-// =========================
+// ================= DRAW NODES =================
 
 Object.keys(nodes).forEach(id=>{
   const n=nodes[id];
 
   if(n.type==='valve'){
+
+    if(typeof n.open === "undefined") n.open = true;
+
     const icon=L.divIcon({
-      className:'',
-      html:`<div id="valve-${id}" class="valve"></div>`,
+      html:`<div id="valve-${id}" class="valve ${n.open?'':'closed'}"></div>`,
       iconSize:[22,22]
     });
 
@@ -103,13 +170,12 @@ Object.keys(nodes).forEach(id=>{
 
     marker.on('click',()=>{
       n.open=!n.open;
-      updateValves();
+      syncUI();
       computeIsolation();
     });
 
   } else {
     const icon=L.divIcon({
-      className:'',
       html:`<div class="node-dot"></div>`,
       iconSize:[6,6]
     });
@@ -117,32 +183,82 @@ Object.keys(nodes).forEach(id=>{
   }
 });
 
-function updateValves(){
+// ================= SIDEBAR =================
+
+function buildSidebar(){
+
+  const container=document.getElementById("valveList");
+  container.innerHTML="";
+
   Object.keys(nodes).forEach(id=>{
     if(nodes[id].type==='valve'){
+
+      const row=document.createElement("div");
+      row.className="valve-row";
+
+      const label=document.createElement("span");
+      label.innerText=id;
+
+      const btn=document.createElement("button");
+      btn.className="toggle-btn";
+      btn.onclick=()=>{
+        nodes[id].open=!nodes[id].open;
+        syncUI();
+        computeIsolation();
+      };
+
+      row.appendChild(label);
+      row.appendChild(btn);
+      container.appendChild(row);
+    }
+  });
+
+  syncUI();
+}
+
+function syncUI(){
+
+  Object.keys(nodes).forEach(id=>{
+    if(nodes[id].type==='valve'){
+
       const el=document.getElementById(`valve-${id}`);
+      const buttons=document.querySelectorAll(".valve-row");
+
       if(nodes[id].open){
-        el.classList.remove('closed');
+        el.classList.remove("closed");
       } else {
-        el.classList.add('closed');
+        el.classList.add("closed");
       }
+    }
+  });
+
+  // update sidebar buttons
+  document.querySelectorAll(".valve-row").forEach(row=>{
+    const id=row.firstChild.innerText;
+    const btn=row.lastChild;
+
+    if(nodes[id].open){
+      btn.innerText="Open";
+      btn.className="toggle-btn open";
+    } else {
+      btn.innerText="Closed";
+      btn.className="toggle-btn closed";
     }
   });
 }
 
-// =========================
-// PROPER ISOLATION ENGINE
-// =========================
+// ================= ISOLATION =================
 
 function computeIsolation(){
 
-  pipeLayers.forEach(p=>p.line.setStyle({color:'#bbb'}));
+  pipeLayers.forEach(p=>{
+    p.line.setStyle({color:'#bbb'});
+    p.line._path.classList.remove("pipe-glow");
+  });
 
   let visited=new Set();
-  let groupIndex=0;
-
-  // Build adjacency WITHOUT pipes connected to closed valves
   let adjacency={};
+  let groups=[];
 
   Object.keys(nodes).forEach(id=>adjacency[id]=[]);
 
@@ -150,7 +266,6 @@ function computeIsolation(){
     const from=p[0];
     const to=p[1];
 
-    // Skip pipe if either end is closed valve
     if(nodes[from].type==='valve' && !nodes[from].open) return;
     if(nodes[to].type==='valve' && !nodes[to].open) return;
 
@@ -176,27 +291,80 @@ function computeIsolation(){
       });
     }
 
-    if(group.length){
-      let color=getColor(groupIndex++);
+    if(group.length) groups.push(group);
+  });
 
-      pipeLayers.forEach(p=>{
-        if(group.includes(p.from) && group.includes(p.to)){
-          p.line.setStyle({color});
-        }
-      });
-    }
+  groups.forEach(group=>{
+    const hue=Math.floor(Math.random()*360);
+    const color=`hsl(${hue},70%,55%)`;
+
+    pipeLayers.forEach(p=>{
+      if(group.includes(p.from) && group.includes(p.to)){
+        p.line.setStyle({color});
+        p.line._path.classList.add("pipe-glow");
+      }
+    });
   });
 }
 
-function getColor(i){
-  const colors=[
-    "#ff4d4d","#4da6ff","#4dff88",
-    "#ffcc00","#cc66ff","#ff884d",
-    "#66ffff","#ff66b2"
-  ];
-  return colors[i%colors.length];
+// ================= CONFIG SAVE/LOAD =================
+
+function saveConfig(){
+  const name=document.getElementById("configName").value;
+  if(!name) return alert("Enter a name");
+
+  let configs=JSON.parse(localStorage.getItem("valveConfigs")||"{}");
+
+  configs[name]=Object.fromEntries(
+    Object.entries(nodes)
+      .filter(([id,n])=>n.type==='valve')
+      .map(([id,n])=>[id,n.open])
+  );
+
+  localStorage.setItem("valveConfigs",JSON.stringify(configs));
+  loadConfigList();
 }
 
+function loadConfig(){
+  const name=document.getElementById("configSelect").value;
+  if(!name) return;
+
+  let configs=JSON.parse(localStorage.getItem("valveConfigs")||"{}");
+  const config=configs[name];
+
+  Object.keys(config).forEach(id=>{
+    nodes[id].open=config[id];
+  });
+
+  syncUI();
+  computeIsolation();
+}
+
+function deleteConfig(){
+  const name=document.getElementById("configSelect").value;
+  let configs=JSON.parse(localStorage.getItem("valveConfigs")||"{}");
+  delete configs[name];
+  localStorage.setItem("valveConfigs",JSON.stringify(configs));
+  loadConfigList();
+}
+
+function loadConfigList(){
+  const select=document.getElementById("configSelect");
+  select.innerHTML="";
+  let configs=JSON.parse(localStorage.getItem("valveConfigs")||"{}");
+
+  Object.keys(configs).forEach(name=>{
+    const option=document.createElement("option");
+    option.value=name;
+    option.innerText=name;
+    select.appendChild(option);
+  });
+}
+
+// ================= INIT =================
+
+buildSidebar();
+loadConfigList();
 computeIsolation();
 
 </script>
